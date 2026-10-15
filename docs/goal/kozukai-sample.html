@@ -27,14 +27,20 @@ const { useState, useEffect, useRef } = React;
 const CATEGORIES = ["未分類", "食費", "交通費", "日用品", "娯楽", "お小遣い"];
 const NOTE_MAX = 200;
 
-// MEMO: 本来は API から取得する想定（acc-ui の「経理月」に相当）
+// MEMO: 本来は API から取得する想定（実務の「経理月」に相当）
 const CURRENT_MONTH = "2026-10";
+
+// MEMO: カテゴリ別の月予算。本来は API（マスタ）から取得する想定。収入のカテゴリには予算を持たない
+const BUDGETS = { 食費: 10000, 交通費: 5000, 日用品: 5000, 娯楽: 5000 };
+
+// この金額以上の支出は備考を必須にする
+const HIGH_AMOUNT_THRESHOLD = 10000;
 
 const INITIAL_ENTRIES = [
   { id: 1, date: "2026-09-01", title: "お小遣い", type: "income", category: "お小遣い", amount: 30000, note: "" },
   { id: 2, date: "2026-09-05", title: "ランチ", type: "expense", category: "食費", amount: 1200, note: "同期と駅前の定食屋" },
   { id: 3, date: "2026-09-12", title: "映画", type: "expense", category: "娯楽", amount: 1900, note: "" },
-  { id: 4, date: "2026-09-20", title: "定期券", type: "expense", category: "交通費", amount: 8500, note: "1 か月分。次回更新は 10/20" },
+  { id: 4, date: "2026-09-20", title: "定期券", type: "expense", category: "交通費", amount: 12500, note: "1 か月分。次回更新は 10/20" },
   { id: 5, date: "2026-10-01", title: "お小遣い", type: "income", category: "お小遣い", amount: 30000, note: "" },
   { id: 6, date: "2026-10-03", title: "コンビニ", type: "expense", category: "食費", amount: 680, note: "おにぎり 2 個と飲み物" },
   { id: 7, date: "2026-10-08", title: "本", type: "expense", category: "娯楽", amount: 1650, note: "React の入門書\n読み終わったら感想をメモする" },
@@ -57,6 +63,53 @@ const monthLabel = (month) => {
   return `${y}年${m}月`;
 };
 const dateLabel = (date) => date.replaceAll("-", "/");
+const monthOf = (date) => date.slice(0, 7);
+
+// ------------------------------------------------------------
+// 業務ルール（React にも API にも依存しない純粋な関数）
+// ------------------------------------------------------------
+
+// 今月を締められるか: 表示月が今月、未締め、未分類なし、前月が締め済（前月に明細がなければ不要）
+function canCloseMonth({ viewMonth, currentMonth, closedMonths, allEntries }) {
+  const monthEntries = allEntries.filter((e) => monthOf(e.date) === viewMonth);
+  const prevMonth = shiftMonth(viewMonth, -1);
+  const prevHasEntries = allEntries.some((e) => monthOf(e.date) === prevMonth);
+  const isCurrent = viewMonth === currentMonth;
+  const isClosed = closedMonths.includes(viewMonth);
+  const hasUncategorized = monthEntries.some((e) => e.category === "未分類");
+  const prevSettled = closedMonths.includes(prevMonth) || !prevHasEntries;
+  return isCurrent && !isClosed && !hasUncategorized && prevSettled;
+}
+
+// 明細の日付として登録できるか: 締め済の月と、今月より先の月には登録できない
+function getDateRegistrationError(date, { currentMonth, closedMonths }) {
+  if (!date) return null;
+  const m = monthOf(date);
+  if (closedMonths.includes(m)) return "締め済の月には登録できません";
+  if (m > currentMonth) return "今月より先の月には登録できません";
+  return null;
+}
+
+// 高額支出か: 閾値以上の支出
+const isHighAmountExpense = (e) => e.type === "expense" && Number(e.amount) >= HIGH_AMOUNT_THRESHOLD;
+
+// 高額支出には備考が必要
+function getNoteRequirementError(values) {
+  if (isHighAmountExpense(values) && !values.note.trim()) {
+    return `${yen(HIGH_AMOUNT_THRESHOLD)} 以上の支出には備考が必要です`;
+  }
+  return null;
+}
+
+// カテゴリ別の予算状況。超過は警告のみで、締めは妨げない
+function getBudgetStatuses(monthEntries, budgets) {
+  return Object.entries(budgets).map(([category, budget]) => {
+    const spent = monthEntries
+      .filter((e) => e.type === "expense" && e.category === category)
+      .reduce((sum, e) => sum + e.amount, 0);
+    return { category, budget, spent, remaining: budget - spent, isOver: spent > budget, ratio: Math.min(spent / budget, 1) };
+  });
+}
 
 // ------------------------------------------------------------
 // 汎用 UI 部品
@@ -95,6 +148,7 @@ const Badge = ({ tone, children }) => {
     blue: "bg-blue-100 text-blue-800",
     green: "bg-green-100 text-green-800",
     amber: "bg-amber-100 text-amber-900",
+    red: "bg-red-100 text-red-800",
   };
   return <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${tones[tone]}`}>{children}</span>;
 };
@@ -142,7 +196,7 @@ function ConfirmDialog({ open, title, description, confirmLabel, danger, onCance
 // ------------------------------------------------------------
 const EMPTY_FORM = { date: "", title: "", type: "expense", category: "食費", amount: "", note: "" };
 
-function EntryFormDialog({ open, mode, initial, onCancel, onSubmit }) {
+function EntryFormDialog({ open, mode, initial, checkRules, onCancel, onSubmit }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [errors, setErrors] = useState({});
 
@@ -171,6 +225,9 @@ function EntryFormDialog({ open, mode, initial, onCancel, onSubmit }) {
     if (!form.title.trim()) next.title = "内容を入力してください";
     if (!(Number(form.amount) > 0)) next.amount = "1 円以上の金額を入力してください";
     if (form.note.length > NOTE_MAX) next.note = `備考は ${NOTE_MAX} 文字以内で入力してください`;
+    // 入力形式のチェックが通った項目だけ、業務ルールのチェックをかける
+    const ruleErrors = checkRules(form);
+    Object.entries(ruleErrors).forEach(([key, msg]) => { if (msg && !next[key]) next[key] = msg; });
     setErrors(next);
     if (Object.keys(next).length > 0) return;
     onSubmit({ ...form, title: form.title.trim(), note: form.note.trim(), amount: Number(form.amount) });
@@ -277,7 +334,10 @@ function EntryTable({ entries, onDetail }) {
                   <button type="button" onClick={() => onDetail(e.id)} className="text-left text-blue-700 hover:underline">{e.title}</button>
                 </td>
                 <td className="px-3 py-2.5">{isUn ? <Badge tone="amber">未分類</Badge> : e.category}</td>
-                <td className={`whitespace-nowrap px-3 py-2.5 text-right tabular-nums ${e.type === "income" ? "text-green-800" : ""}`}>{signedYen(e)}</td>
+                <td className={`whitespace-nowrap px-3 py-2.5 text-right tabular-nums ${e.type === "income" ? "text-green-800" : ""}`}>
+                  {isHighAmountExpense(e) && <Badge tone="red">高額</Badge>}
+                  <span className="ml-2">{signedYen(e)}</span>
+                </td>
                 <td className="px-3 py-2.5 text-right text-neutral-500">
                   {e.note && <Icon d={ICONS.note} size={16} className="inline-block" aria-label="備考あり" />}
                 </td>
@@ -290,8 +350,46 @@ function EntryTable({ entries, onDetail }) {
   );
 }
 
-function LedgerPage({ viewMonth, entries, isCurrent, isClosed, canClose, onPrev, onNext, onCloseMonth, onAdd, onDetail }) {
+function BudgetCard({ statuses }) {
+  return (
+    <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+      <div className="flex items-center justify-between border-b border-neutral-200 px-5 py-3.5">
+        <h2 className="text-[15px] font-bold">カテゴリ別予算</h2>
+        <span className="text-[13px] text-neutral-600">支出 / 予算</span>
+      </div>
+      <ul className="divide-y divide-neutral-100">
+        {statuses.map((b) => (
+          <li key={b.category} className="flex flex-col gap-1.5 px-5 py-3">
+            <div className="flex items-center justify-between text-sm">
+              <span className="flex items-center gap-2">
+                {b.category}
+                {b.isOver && <Badge tone="red">超過</Badge>}
+              </span>
+              <span className={`tabular-nums ${b.isOver ? "font-medium text-red-700" : "text-neutral-700"}`}>
+                {yen(b.spent)} / {yen(b.budget)}
+              </span>
+            </div>
+            <div
+              className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-100"
+              role="progressbar"
+              aria-valuemin="0"
+              aria-valuemax={b.budget}
+              aria-valuenow={Math.min(b.spent, b.budget)}
+              aria-valuetext={b.isOver ? `支出 ${yen(b.spent)}、予算 ${yen(b.budget)}、${yen(-b.remaining)} 超過` : `支出 ${yen(b.spent)}、予算 ${yen(b.budget)}、残り ${yen(b.remaining)}`}
+              aria-label={`${b.category}の予算消化`}
+            >
+              <div className={`h-full rounded-full ${b.isOver ? "bg-red-600" : "bg-blue-600"}`} style={{ width: `${b.ratio * 100}%` }} />
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function LedgerPage({ viewMonth, entries, budgetStatuses, isCurrent, isClosed, canClose, onPrev, onNext, onCloseMonth, onAdd, onDetail }) {
   const uncategorized = entries.filter((e) => e.category === "未分類");
+  const overBudget = budgetStatuses.filter((b) => b.isOver);
   const income = entries.filter((e) => e.type === "income").reduce((s, e) => s + e.amount, 0);
   const expense = entries.filter((e) => e.type === "expense").reduce((s, e) => s + e.amount, 0);
 
@@ -314,6 +412,13 @@ function LedgerPage({ viewMonth, entries, isCurrent, isClosed, canClose, onPrev,
 
       <SummaryCards income={income} expense={expense} />
 
+      {overBudget.length > 0 && (
+        <div role="status" className="flex items-center gap-2.5 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <Icon d={ICONS.warn} size={18} />
+          予算を超えたカテゴリがあります: {overBudget.map((b) => `${b.category}（${yen(b.spent)} / ${yen(b.budget)}）`).join("、")}
+        </div>
+      )}
+
       {uncategorized.length > 0 && (
         <div role="status" className="flex items-center gap-2.5 rounded-lg border border-amber-300 bg-amber-100 px-4 py-3 text-sm text-amber-900">
           <Icon d={ICONS.warn} size={18} />
@@ -328,6 +433,8 @@ function LedgerPage({ viewMonth, entries, isCurrent, isClosed, canClose, onPrev,
         </div>
         <EntryTable entries={entries} onDetail={onDetail} />
       </div>
+
+      <BudgetCard statuses={budgetStatuses} />
     </div>
   );
 }
@@ -357,7 +464,12 @@ function EntryDetailPage({ entry, isClosed, onBack, onEdit, onDelete }) {
           <Row label="内容">{entry.title}</Row>
           <Row label="種別">{entry.type === "income" ? "収入" : "支出"}</Row>
           <Row label="カテゴリ">{entry.category === "未分類" ? <Badge tone="amber">未分類</Badge> : entry.category}</Row>
-          <Row label="金額"><span className="tabular-nums">{signedYen(entry)}</span></Row>
+          <Row label="金額">
+            <span className="flex items-center gap-2">
+              <span className="tabular-nums">{signedYen(entry)}</span>
+              {isHighAmountExpense(entry) && <Badge tone="red">高額</Badge>}
+            </span>
+          </Row>
           <Row label="備考">
             {entry.note
               ? <span className="whitespace-pre-wrap leading-relaxed">{entry.note}</span>
@@ -392,8 +504,14 @@ function App() {
 
   const isCurrent = viewMonth === CURRENT_MONTH;
   const isClosed = closedMonths.includes(viewMonth);
-  const hasUncategorized = monthEntries.some((e) => e.category === "未分類");
-  const canClose = isCurrent && !isClosed && !hasUncategorized;
+  const canClose = canCloseMonth({ viewMonth, currentMonth: CURRENT_MONTH, closedMonths, allEntries: entries });
+  const budgetStatuses = getBudgetStatuses(monthEntries, BUDGETS);
+
+  // フォームにかける業務ルール。締め状態と今月を知っているのはここだけなので、ここで組み立てて渡す
+  const checkRules = (values) => ({
+    date: getDateRegistrationError(values.date, { currentMonth: CURRENT_MONTH, closedMonths }),
+    note: getNoteRequirementError(values),
+  });
 
   const closeDialog = () => setDialog(null);
   const findEntry = (id) => entries.find((e) => e.id === id);
@@ -440,6 +558,7 @@ function App() {
       <LedgerPage
         viewMonth={viewMonth}
         entries={monthEntries}
+        budgetStatuses={budgetStatuses}
         isCurrent={isCurrent}
         isClosed={isClosed}
         canClose={canClose}
@@ -491,6 +610,7 @@ function App() {
         open={dialog?.kind === "create"}
         mode="create"
         initial={dialog?.kind === "create" ? { ...EMPTY_FORM, date: isCurrent ? "2026-10-15" : `${viewMonth}-01` } : null}
+        checkRules={checkRules}
         onCancel={closeDialog}
         onSubmit={addEntry}
       />
@@ -498,6 +618,7 @@ function App() {
         open={!!editTarget}
         mode="edit"
         initial={editTarget}
+        checkRules={checkRules}
         onCancel={closeDialog}
         onSubmit={(values) => updateEntry(editTarget.id, values)}
       />
