@@ -165,30 +165,92 @@ Issue 候補（この順）:
 
 ### Phase 9: アーキテクチャ
 
-**学習目標**: ここまで「動くもの」として育てたアプリを、実務のリポジトリと同じレイヤー構成に組み替える。各レイヤーの責務と、依存してよい方向を理解する。
+**学習目標**: ここまで「動くもの」として育てたアプリを、実務のリポジトリと同じレイヤー構成（フィーチャーベースの DDD 構造）に組み替える。各レイヤーの責務と、依存してよい方向を理解する。
 
-想定するレイヤー（名称は実務のリポジトリに合わせて、この Phase の Issue 作成時に確定する）:
+目標とする構成。小遣い帳は 1 つの feature（`ledger`）として組む。
 
-| レイヤー | 責務 | 依存してよい先 |
+```
+src/
+├── features/ledger/
+│   ├── core/           # 業務ルール（純粋ドメイン）。React にも API にも依存しない
+│   ├── app/
+│   │   ├── mapper/     # 境界翻訳（infra の DTO ⇄ ドメイン型）
+│   │   ├── usecase/    # 業務処理の手順（締める、追加する、初期化する）
+│   │   ├── util/       # 純粋ヘルパー（表示用の変換など）
+│   │   └── hooks/      # view と usecase・state をつなぐ hook
+│   ├── state/          # Jotai atom の定義だけ
+│   ├── view/           # UI コンポーネント
+│   └── pages.ts        # ルーティングに載せる画面の公開エントリ
+├── domain/             # 複数の feature が共有する業務ドメイン（今回は使わなくてよい）
+├── infra/
+│   ├── ledger/
+│   │   ├── ledger.port.ts        # Port（インターフェース）
+│   │   └── ledger.repository.ts  # Repository 実装（localStorage・偽 API）
+│   ├── repos.ts                  # Repository 実装をまとめて生成する
+│   ├── RepositoryProvider.tsx    # Repository を Context で配る Provider
+│   └── useRepos.ts               # Provider から Repository を取り出す hook（usecase の組み立て専用）
+├── usecase/
+│   ├── container.ts              # Repository を usecase に組み立てる DI コンテナ。配線だけ
+│   ├── UsecaseProvider.tsx       # usecase を Context で配る Provider
+│   └── useUsecase.ts             # Provider から usecase を取り出す hook（app/hooks から使う）
+├── shared/ui/          # feature をまたいで使う汎用の部品。infra・usecase に依存しない
+├── pages/              # ルーティング
+└── main.tsx            # composition root。RepositoryProvider → UsecaseProvider → App の順に包む
+```
+
+Provider の配置は次のとおり。`main.tsx` がアプリ全体を 2 つの Provider で包み（composition root）、それより内側では Provider を作らない。
+
+```
+main.tsx
+└── <RepositoryProvider>          infra/repos.ts で Repository 実装を生成して配る
+    └── <UsecaseProvider>         useRepos() で Repository を受け取り、usecase/container.ts で usecase を組み立てて配る
+        └── <App>                 ルーティングと画面。app/hooks は useUsecase() で usecase を受け取る
+```
+
+依存の方向:
+
+```
+main.tsx ──→ infra/RepositoryProvider ──→ infra/repos.ts ──→ infra/ledger/*.repository.ts
+         └─→ usecase/UsecaseProvider ──→ usecase/container.ts ──→ features/ledger/app/usecase
+
+view ──→ app/hooks ──→ usecase/useUsecase() ──→ app/usecase ──→ infra（Port 経由）
+                │                                    └──→ app/mapper ──→ core
+                └──→ state, core
+state はどこにも依存しない。core は外界に一切依存しない。
+app/hooks は usecase を useUsecase() 経由で受け取り、app/usecase や infra を直接 import しない。
+```
+
+| レイヤー | 責務 | 置かないもの |
 | --- | --- | --- |
-| view | 表示と入力の受付だけ | hooks |
-| hooks | view と usecase をつなぐ | usecase、state、domain |
-| usecase | 処理の流れ（締める、追加する、初期化する） | domain、infra |
-| domain（core） | 業務ルール・判定ロジック。React にも API にも依存しない | なし |
-| state | atom の定義だけ。ロジックを書かない | なし |
-| infra | 外部とのやりとり（API、localStorage） | なし |
+| `core/` | 業務ルール。可否・要否の判断（「締められるか」「編集できるか」）、金額計算、バリデーション | React、API、infra の型 |
+| `app/usecase/` | 処理の流れ。「締める」なら、判断を core に聞き、保存を Repository に頼む | UI、JSX |
+| `app/hooks/` | view に必要なものを返す配線。usecase の呼び出しと atom の読み書き | 業務ロジック、Repository の直接呼び出し |
+| `app/mapper/` | infra の DTO とドメイン型の相互変換 | 業務判断 |
+| `state/` | atom の定義 | ロジック |
+| `view/` | 表示と入力の受付 | 可否の判断を生の値から組み立てること |
+| `infra/` | 外部とのやりとり。Port（インターフェース）と Repository 実装 | 業務判断 |
+| `usecase/`（トップ） | Repository を usecase に注入する DI コンテナ | ロジック |
 
 Issue 候補（この順）:
 
-1. **レイヤーの説明を読み、現状のコードを分類する**: いまのファイルがどのレイヤーに当たるかを表にする。1 つのファイルに複数のレイヤーが混ざっている箇所を見つける。
-2. **domain を切り出す**: ルール表、バリデーション、金額計算を `domain/` に移す。React を import していないことを確認する。Phase 8 のテストがそのまま通る。
-3. **infra を切り出す**: localStorage と偽 API を repository として `infra/` に移す。usecase からは repository のインターフェースだけを見る。
-4. **usecase と hooks を分ける**: 「締める」「追加する」「初期化する」を usecase にし、hooks は view と usecase をつなぐだけにする。
-5. **依存方向を確認する**: 各レイヤーが「依存してよい先」以外を import していないかを確認する。見つかったら直す。
+1. **レイヤーの説明を読み、現状のコードを分類する**: いまのファイルがどのレイヤーに当たるかを表にする。1 つのファイルに複数のレイヤーが混ざっている箇所（view の中で可否を判断している、hook の中で localStorage を触っている、など）を見つける。
+2. **core を切り出す**: ルール表（締められるか、編集できるか）、バリデーション、金額計算を `features/ledger/core/` に移す。React を import していないことを確認する。Phase 8 のテストがそのまま通る。
+3. **infra と Port を切り出す**: localStorage と偽 API を `infra/ledger/` の Repository にし、インターフェース（Port）を定義する。usecase からは Port だけを見る。
+4. **usecase と hooks を分ける**: 「締める」「追加する」「初期化する」を `app/usecase/` にし、`app/hooks/` は view と usecase をつなぐだけにする。可否の判断を view や hook から core へ移す。
+5. **DI コンテナと Provider**: `src/infra/repos.ts` と `RepositoryProvider` で Repository を配り、`src/usecase/container.ts` と `UsecaseProvider` で usecase を組み立てて配る。`main.tsx` で 2 つの Provider を重ねる。`app/hooks` は `useUsecase()` 経由で usecase を受け取るように直す。テストでは `RepositoryProvider` に偽の Repository を渡して、usecase を変更せずに差し替えられることを確認する。
+6. **依存方向を確認する**: 各レイヤーが「依存してよい先」以外を import していないかを確認する。見つかったら直す。
 
-### 卒業
+このレイヤー名は実務のリポジトリと同じものなので、Phase 9 を終えると実務のコードを同じ地図で読める。
 
-Phase 9 まで終えたら、教育担当が用意する最終課題に取り組む。内容は教育担当が管理する。
+### 卒業課題
+
+Phase 9 まで終えたら、教育担当が用意する最終課題に取り組む。
+
+方針:
+
+- 題材は **実務のリポジトリ** から選ぶ。「ある操作ボタンが表示されない」「ある値が期待と違う」のように、画面の挙動の原因をコードから辿る課題にする。
+- 答えは教えない。学習者は、Phase 3 と Phase 7 で身につけた「表示条件の材料を辿る」「atom の書き手を探す」「ルール表を読む」手順をそのまま使い、辿った経路を自分の言葉で説明する。
+- 課題の具体的な内容は、そのときの実務リポジトリの状態を見て教育担当が決める。
 
 ---
 
@@ -224,7 +286,11 @@ Phase をまたいで繰り返し組み込むテーマ。Issue を作るとき�
 | 2 | ボタンの表示条件の材料 | Phase 3 |
 | 3 | ルール表の 1 条件 | Phase 7 |
 
-共通ルール: 学習者は「画面だけで切り分け → 出力で絞り込み → 原因の行」の順で進め、経路を PR に書く。
+方針:
+
+- 教育担当は、その時点のコードに **画面上は変化が見えず、特定の条件だけが偽になる変更を 1 箇所** 入れたブランチを用意する。読めば分かる変更（明らかな typo、`&& false` のような式）にはしない。出力して確かめないと分からない変更にする。
+- 壊す場所は段階ごとに深くする（条件そのもの → 条件の材料 → 材料を作っている別レイヤー）。
+- 学習者は「画面だけで切り分け → 出力で絞り込み → 原因の行」の順で進め、辿った経路を PR に書く。原因の行だけを書いた PR は差し戻す。
 
 ### 差し込み候補（学習のチャンスがあれば Issue にする）
 
