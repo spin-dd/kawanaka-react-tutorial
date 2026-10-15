@@ -369,7 +369,15 @@ function BudgetCard({ statuses }) {
                 {yen(b.spent)} / {yen(b.budget)}
               </span>
             </div>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-100" role="progressbar" aria-valuemin="0" aria-valuemax={b.budget} aria-valuenow={b.spent} aria-label={`${b.category}の予算消化`}>
+            <div
+              className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-100"
+              role="progressbar"
+              aria-valuemin="0"
+              aria-valuemax={b.budget}
+              aria-valuenow={Math.min(b.spent, b.budget)}
+              aria-valuetext={b.isOver ? `支出 ${yen(b.spent)}、予算 ${yen(b.budget)}、${yen(-b.remaining)} 超過` : `支出 ${yen(b.spent)}、予算 ${yen(b.budget)}、残り ${yen(b.remaining)}`}
+              aria-label={`${b.category}の予算消化`}
+            >
               <div className={`h-full rounded-full ${b.isOver ? "bg-red-600" : "bg-blue-600"}`} style={{ width: `${b.ratio * 100}%` }} />
             </div>
           </li>
