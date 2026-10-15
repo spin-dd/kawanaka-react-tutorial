@@ -1,5 +1,7 @@
+import Home from './pages/Home.tsx'
+
 function App() {
-  return null
+  return <Home />
 }
 
 export default App
