@@ -8,7 +8,7 @@
 1. リポジトリをクローンして、フォルダに移動する
 
 ```bash
-   git clone https://github.com/SK-Shun/kawanaka-react-tutorial.git
+   git clone https://github.com/spin-dd/kawanaka-react-tutorial.git
    cd kawanaka-react-tutorial
 ```
 
