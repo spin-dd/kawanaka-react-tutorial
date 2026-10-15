@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>小遣い帳 サンプル</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.1.14/dist/index.global.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+<style>
+  body { margin: 0; font-family: "Noto Sans JP", system-ui, sans-serif; background: #F4F4F1; color: #1C1C1A; }
+  input, select { font-family: inherit; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+
+// ------------------------------------------------------------
+// 定数・サンプルデータ
+// ------------------------------------------------------------
+const CATEGORIES = ["未分類", "食費", "交通費", "日用品", "娯楽", "お小遣い"];
+const NOTE_MAX = 200;
+
+// MEMO: 本来は API から取得する想定（acc-ui の「経理月」に相当）
+const CURRENT_MONTH = "2026-10";
+
+const INITIAL_ENTRIES = [
+  { id: 1, date: "2026-09-01", title: "お小遣い", type: "income", category: "お小遣い", amount: 30000, note: "" },
+  { id: 2, date: "2026-09-05", title: "ランチ", type: "expense", category: "食費", amount: 1200, note: "同期と駅前の定食屋" },
+  { id: 3, date: "2026-09-12", title: "映画", type: "expense", category: "娯楽", amount: 1900, note: "" },
+  { id: 4, date: "2026-09-20", title: "定期券", type: "expense", category: "交通費", amount: 8500, note: "1 か月分。次回更新は 10/20" },
+  { id: 5, date: "2026-10-01", title: "お小遣い", type: "income", category: "お小遣い", amount: 30000, note: "" },
+  { id: 6, date: "2026-10-03", title: "コンビニ", type: "expense", category: "食費", amount: 680, note: "おにぎり 2 個と飲み物" },
+  { id: 7, date: "2026-10-08", title: "本", type: "expense", category: "娯楽", amount: 1650, note: "React の入門書\n読み終わったら感想をメモする" },
+  { id: 8, date: "2026-10-11", title: "電車", type: "expense", category: "交通費", amount: 420, note: "" },
+  { id: 9, date: "2026-10-14", title: "ドラッグストア", type: "expense", category: "未分類", amount: 2400, note: "レシートをなくしたので内訳が不明。思い出したらカテゴリを直す" },
+];
+
+// ------------------------------------------------------------
+// ユーティリティ
+// ------------------------------------------------------------
+function shiftMonth(month, delta) {
+  const [y, m] = month.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+const yen = (n) => "¥" + Number(n).toLocaleString("ja-JP");
+const signedYen = (e) => (e.type === "income" ? "+" : "−") + yen(e.amount);
+const monthLabel = (month) => {
+  const [y, m] = month.split("-").map(Number);
+  return `${y}年${m}月`;
+};
+const dateLabel = (date) => date.replaceAll("-", "/");
+
+// ------------------------------------------------------------
+// 汎用 UI 部品
+// ------------------------------------------------------------
+const Icon = ({ d, size = 16, className = "", ...rest }) => (
+  <svg aria-hidden={rest["aria-label"] ? undefined : "true"} role={rest["aria-label"] ? "img" : undefined} {...rest} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    {Array.isArray(d) ? d.map((p, i) => <path key={i} d={p} />) : <path d={d} />}
+  </svg>
+);
+const ICONS = {
+  prev: "M15 18l-6-6 6-6",
+  next: "M9 6l6 6-6 6",
+  lock: ["M5 11h14v10H5z", "M7 11V7a5 5 0 0 1 10 0v4"],
+  plus: ["M12 5v14", "M5 12h14"],
+  warn: ["M12 9v4", "M12 17h.01", "M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"],
+  book: ["M3 4h18v16H3z", "M3 10h18", "M8 15h4"],
+  note: ["M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z", "M14 3v6h6", "M8 13h8", "M8 17h5"],
+};
+
+const Button = ({ variant = "secondary", show = true, className = "", ...props }) => {
+  // NOTE: acc-ui の Button と同じく show=false なら描画しない
+  if (!show) return null;
+  const base = "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium h-11 px-5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed";
+  const styles = {
+    primary: "bg-blue-700 text-white hover:bg-blue-800",
+    secondary: "bg-white text-neutral-900 border border-neutral-300 hover:bg-neutral-50",
+    dark: "bg-neutral-900 text-white hover:bg-neutral-800",
+    danger: "bg-red-700 text-white hover:bg-red-800",
+    dangerOutline: "bg-white text-red-700 border border-red-300 hover:bg-red-50",
+  };
+  return <button type="button" className={`${base} ${styles[variant]} ${className}`} {...props} />;
+};
+
+const Badge = ({ tone, children }) => {
+  const tones = {
+    blue: "bg-blue-100 text-blue-800",
+    green: "bg-green-100 text-green-800",
+    amber: "bg-amber-100 text-amber-900",
+  };
+  return <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${tones[tone]}`}>{children}</span>;
+};
+
+// MEMO: 実装では Headless UI の Dialog を使う。ここでは同じ挙動（Esc・背景クリックで閉じる、フォーカス移動）を最小限で再現
+function Dialog({ open, title, description, onClose, children }) {
+  const panelRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.activeElement;
+    panelRef.current?.focus();
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      prev?.focus?.();
+    };
+  }, [open]);
+
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/55 p-6" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="dialog-title" className="flex w-full max-w-md flex-col gap-4 rounded-xl bg-white p-6 shadow-2xl outline-none">
+        <h2 id="dialog-title" className="text-lg font-bold">{title}</h2>
+        {description && <p className="text-sm leading-relaxed text-neutral-700">{description}</p>}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ConfirmDialog({ open, title, description, confirmLabel, danger, onCancel, onConfirm }) {
+  return (
+    <Dialog open={open} title={title} description={description} onClose={onCancel}>
+      <div className="flex flex-wrap justify-end gap-3">
+        <Button variant="secondary" onClick={onCancel}>キャンセル</Button>
+        <Button variant={danger ? "danger" : "primary"} onClick={onConfirm}>{confirmLabel}</Button>
+      </div>
+    </Dialog>
+  );
+}
+
+// ------------------------------------------------------------
+// 明細フォーム（追加・編集で共用）
+// ------------------------------------------------------------
+const EMPTY_FORM = { date: "", title: "", type: "expense", category: "食費", amount: "", note: "" };
+
+function EntryFormDialog({ open, mode, initial, onCancel, onSubmit }) {
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [errors, setErrors] = useState({});
+
+  // ダイアログを開くたびに初期値を入れ直す
+  useEffect(() => {
+    if (open) {
+      setForm(initial ? { ...initial, amount: String(initial.amount) } : EMPTY_FORM);
+      setErrors({});
+    }
+  }, [open, initial]);
+
+  // 入力し直した項目のエラーは消す（次の送信で再チェックする）
+  const update = (patch) => {
+    setForm((f) => ({ ...f, ...patch }));
+    setErrors((prev) => {
+      const next = { ...prev };
+      Object.keys(patch).forEach((k) => delete next[k]);
+      return next;
+    });
+  };
+
+  const submit = (e) => {
+    e.preventDefault();
+    const next = {};
+    if (!form.date) next.date = "日付を入力してください";
+    if (!form.title.trim()) next.title = "内容を入力してください";
+    if (!(Number(form.amount) > 0)) next.amount = "1 円以上の金額を入力してください";
+    if (form.note.length > NOTE_MAX) next.note = `備考は ${NOTE_MAX} 文字以内で入力してください`;
+    setErrors(next);
+    if (Object.keys(next).length > 0) return;
+    onSubmit({ ...form, title: form.title.trim(), note: form.note.trim(), amount: Number(form.amount) });
+  };
+
+  const field = "h-10 w-full rounded-md border border-neutral-300 bg-white px-3 text-sm focus:outline-2 focus:outline-blue-700";
+  const label = "text-xs text-neutral-600";
+  const error = "text-xs text-red-700";
+
+  return (
+    <Dialog open={open} title={mode === "edit" ? "明細を編集" : "明細を追加"} onClose={onCancel}>
+      <form onSubmit={submit} className="flex flex-col gap-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div className="flex flex-col gap-1">
+            <label htmlFor="f-date" className={label}>日付</label>
+            <input id="f-date" type="date" className={field} value={form.date} onChange={(e) => update({ date: e.target.value })} />
+            {errors.date && <span className={error}>{errors.date}</span>}
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className={label}>種別</span>
+            <div className="flex h-10 items-center gap-4 text-sm">
+              <label className="flex items-center gap-1.5"><input type="radio" name="type" value="expense" checked={form.type === "expense"} onChange={() => update({ type: "expense" })} />支出</label>
+              <label className="flex items-center gap-1.5"><input type="radio" name="type" value="income" checked={form.type === "income"} onChange={() => update({ type: "income" })} />収入</label>
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor="f-title" className={label}>内容</label>
+          <input id="f-title" type="text" placeholder="例: ランチ" className={field} value={form.title} onChange={(e) => update({ title: e.target.value })} />
+          {errors.title && <span className={error}>{errors.title}</span>}
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="flex flex-col gap-1">
+            <label htmlFor="f-category" className={label}>カテゴリ</label>
+            <select id="f-category" className={field} value={form.category} onChange={(e) => update({ category: e.target.value })}>
+              {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="f-amount" className={label}>金額（円）</label>
+            <input id="f-amount" type="number" min="1" placeholder="1200" className={field} value={form.amount} onChange={(e) => update({ amount: e.target.value })} />
+            {errors.amount && <span className={error}>{errors.amount}</span>}
+          </div>
+        </div>
+        <div className="flex flex-col gap-1">
+          <div className="flex items-baseline justify-between">
+            <label htmlFor="f-note" className={label}>備考（任意）</label>
+            <span className={`text-xs ${form.note.length > NOTE_MAX ? "text-red-700" : "text-neutral-500"}`}>{form.note.length} / {NOTE_MAX}</span>
+          </div>
+          <textarea id="f-note" rows="3" placeholder="例: 同期とランチ。領収書あり" className="w-full resize-y rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm leading-relaxed focus:outline-2 focus:outline-blue-700" value={form.note} onChange={(e) => update({ note: e.target.value })} />
+          {errors.note && <span className={error}>{errors.note}</span>}
+        </div>
+        <div className="mt-2 flex flex-wrap justify-end gap-3">
+          <Button variant="secondary" onClick={onCancel}>キャンセル</Button>
+          <button type="submit" className="inline-flex h-11 items-center rounded-md bg-neutral-900 px-5 text-sm font-medium text-white hover:bg-neutral-800">{mode === "edit" ? "保存" : "追加"}</button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+// ------------------------------------------------------------
+// 月次明細ページの部品
+// ------------------------------------------------------------
+function SummaryCards({ income, expense }) {
+  const Card = ({ label, value, className = "" }) => (
+    <div className="flex flex-col gap-1.5 rounded-lg border border-neutral-200 bg-white px-5 py-4">
+      <div className="text-xs text-neutral-600">{label}</div>
+      <div className={`text-2xl font-bold ${className}`}>{value}</div>
+    </div>
+  );
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <Card label="収入" value={yen(income)} className="text-green-800" />
+      <Card label="支出" value={yen(expense)} className="text-red-700" />
+      <Card label="残高" value={yen(income - expense)} />
+    </div>
+  );
+}
+
+function EntryTable({ entries, onDetail }) {
+  if (entries.length === 0) {
+    return <div className="px-5 py-10 text-center text-sm text-neutral-600">この月の明細はありません</div>;
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse">
+        <thead>
+          <tr className="border-b border-neutral-200 text-left text-xs font-medium text-neutral-600">
+            <th className="whitespace-nowrap px-3 py-2.5">日付</th>
+            <th className="px-3 py-2.5">内容</th>
+            <th className="px-3 py-2.5">カテゴリ</th>
+            <th className="px-3 py-2.5 text-right">金額</th>
+            <th className="px-3 py-2.5 text-right">備考</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((e) => {
+            const isUn = e.category === "未分類";
+            return (
+              <tr key={e.id} className={`border-b border-neutral-100 text-sm ${isUn ? "bg-amber-50" : ""}`}>
+                <td className="whitespace-nowrap px-3 py-2.5 text-neutral-600">{dateLabel(e.date)}</td>
+                <td className="px-3 py-2.5">
+                  <button type="button" onClick={() => onDetail(e.id)} className="text-left text-blue-700 hover:underline">{e.title}</button>
+                </td>
+                <td className="px-3 py-2.5">{isUn ? <Badge tone="amber">未分類</Badge> : e.category}</td>
+                <td className={`whitespace-nowrap px-3 py-2.5 text-right tabular-nums ${e.type === "income" ? "text-green-800" : ""}`}>{signedYen(e)}</td>
+                <td className="px-3 py-2.5 text-right text-neutral-500">
+                  {e.note && <Icon d={ICONS.note} size={16} className="inline-block" aria-label="備考あり" />}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function LedgerPage({ viewMonth, entries, isCurrent, isClosed, canClose, onPrev, onNext, onCloseMonth, onAdd, onDetail }) {
+  const uncategorized = entries.filter((e) => e.category === "未分類");
+  const income = entries.filter((e) => e.type === "income").reduce((s, e) => s + e.amount, 0);
+  const expense = entries.filter((e) => e.type === "expense").reduce((s, e) => s + e.amount, 0);
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="secondary" className="px-3!" onClick={onPrev} aria-label="前月"><Icon d={ICONS.prev} />前月</Button>
+          <h1 className="min-w-[150px] text-center text-2xl font-bold">{monthLabel(viewMonth)}</h1>
+          <Button variant="secondary" className="px-3!" onClick={onNext} aria-label="翌月">翌月<Icon d={ICONS.next} /></Button>
+          {isCurrent && <Badge tone="blue">今月</Badge>}
+          {isClosed && <Badge tone="green">締め済</Badge>}
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <Button variant="dark" show={!isClosed} onClick={onAdd}><Icon d={ICONS.plus} />明細を追加</Button>
+          {/* NOTE: 表示条件 = 今月 && 未締め && 未分類なし。満たさなければ理由を出さず非表示（acc-ui と同じ挙動） */}
+          <Button variant="primary" show={canClose} onClick={onCloseMonth}><Icon d={ICONS.lock} />今月を締める</Button>
+        </div>
+      </div>
+
+      <SummaryCards income={income} expense={expense} />
+
+      {uncategorized.length > 0 && (
+        <div role="status" className="flex items-center gap-2.5 rounded-lg border border-amber-300 bg-amber-100 px-4 py-3 text-sm text-amber-900">
+          <Icon d={ICONS.warn} size={18} />
+          未分類の明細が {uncategorized.length} 件あります。カテゴリを設定してください。
+        </div>
+      )}
+
+      <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+        <div className="flex items-center justify-between border-b border-neutral-200 px-5 py-3.5">
+          <h2 className="text-[15px] font-bold">明細</h2>
+          <span className="text-[13px] text-neutral-600">{entries.length} 件</span>
+        </div>
+        <EntryTable entries={entries} onDetail={onDetail} />
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------
+// 明細詳細ページ
+// ------------------------------------------------------------
+function EntryDetailPage({ entry, isClosed, onBack, onEdit, onDelete }) {
+  const Row = ({ label, children, last }) => (
+    <>
+      <dt className={`py-3.5 text-[13px] text-neutral-600 ${last ? "" : "border-b border-neutral-100"}`}>{label}</dt>
+      <dd className={`m-0 py-3.5 text-[15px] ${last ? "" : "border-b border-neutral-100"}`}>{children}</dd>
+    </>
+  );
+  return (
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-5">
+      <button type="button" onClick={onBack} className="inline-flex min-h-11 items-center gap-1.5 self-start text-sm text-blue-700 hover:underline">
+        <Icon d={ICONS.prev} />{monthLabel(entry.date.slice(0, 7))}の明細に戻る
+      </button>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold">明細詳細</h1>
+        <span className="text-xs text-neutral-600">ID: {entry.id}</span>
+      </div>
+      <div className="rounded-lg border border-neutral-200 bg-white px-6 py-2">
+        <dl className="m-0 grid grid-cols-[140px_1fr]">
+          <Row label="日付">{dateLabel(entry.date)}</Row>
+          <Row label="内容">{entry.title}</Row>
+          <Row label="種別">{entry.type === "income" ? "収入" : "支出"}</Row>
+          <Row label="カテゴリ">{entry.category === "未分類" ? <Badge tone="amber">未分類</Badge> : entry.category}</Row>
+          <Row label="金額"><span className="tabular-nums">{signedYen(entry)}</span></Row>
+          <Row label="備考">
+            {entry.note
+              ? <span className="whitespace-pre-wrap leading-relaxed">{entry.note}</span>
+              : <span className="text-neutral-500">（なし）</span>}
+          </Row>
+          <Row label="月の状態" last>{monthLabel(entry.date.slice(0, 7))}（{isClosed ? "締め済" : "未締め"}）</Row>
+        </dl>
+      </div>
+      <div className="flex flex-wrap gap-3">
+        <Button variant="dark" show={!isClosed} onClick={onEdit}>編集</Button>
+        <Button variant="dangerOutline" show={!isClosed} onClick={onDelete}>削除</Button>
+      </div>
+      {isClosed && <p className="text-[13px] text-neutral-600">締め済の月の明細は、編集・削除できません。</p>}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------
+// アプリ本体
+// ------------------------------------------------------------
+function App() {
+  const [entries, setEntries] = useState(INITIAL_ENTRIES);
+  const [nextId, setNextId] = useState(10);
+  const [viewMonth, setViewMonth] = useState(CURRENT_MONTH);
+  const [closedMonths, setClosedMonths] = useState(["2026-09"]);
+  const [page, setPage] = useState({ name: "ledger" }); // { name: "ledger" } | { name: "detail", id }
+  const [dialog, setDialog] = useState(null); // { kind: "close" | "delete" | "create" | "edit", id? }
+
+  const monthEntries = entries
+    .filter((e) => e.date.slice(0, 7) === viewMonth)
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.id - b.id));
+
+  const isCurrent = viewMonth === CURRENT_MONTH;
+  const isClosed = closedMonths.includes(viewMonth);
+  const hasUncategorized = monthEntries.some((e) => e.category === "未分類");
+  const canClose = isCurrent && !isClosed && !hasUncategorized;
+
+  const closeDialog = () => setDialog(null);
+  const findEntry = (id) => entries.find((e) => e.id === id);
+  const isEntryClosed = (e) => closedMonths.includes(e.date.slice(0, 7));
+
+  // --- 操作 ---
+  const addEntry = (values) => {
+    setEntries((prev) => [...prev, { id: nextId, ...values }]);
+    setNextId((n) => n + 1);
+    setViewMonth(values.date.slice(0, 7));
+    closeDialog();
+  };
+  const updateEntry = (id, values) => {
+    setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, ...values } : e)));
+    closeDialog();
+  };
+  const deleteEntry = (id) => {
+    setEntries((prev) => prev.filter((e) => e.id !== id));
+    closeDialog();
+    if (page.name === "detail" && page.id === id) setPage({ name: "ledger" });
+  };
+  const closeMonth = () => {
+    setClosedMonths((prev) => [...prev, viewMonth]);
+    closeDialog();
+  };
+
+  // --- ページ ---
+  let content;
+  if (page.name === "detail") {
+    const entry = findEntry(page.id);
+    content = entry ? (
+      <EntryDetailPage
+        entry={entry}
+        isClosed={isEntryClosed(entry)}
+        onBack={() => { setViewMonth(entry.date.slice(0, 7)); setPage({ name: "ledger" }); }}
+        onEdit={() => setDialog({ kind: "edit", id: entry.id })}
+        onDelete={() => setDialog({ kind: "delete", id: entry.id })}
+      />
+    ) : (
+      <p className="text-sm text-neutral-600">明細が見つかりません。</p>
+    );
+  } else {
+    content = (
+      <LedgerPage
+        viewMonth={viewMonth}
+        entries={monthEntries}
+        isCurrent={isCurrent}
+        isClosed={isClosed}
+        canClose={canClose}
+        onPrev={() => setViewMonth(shiftMonth(viewMonth, -1))}
+        onNext={() => setViewMonth(shiftMonth(viewMonth, 1))}
+        onCloseMonth={() => setDialog({ kind: "close" })}
+        onAdd={() => setDialog({ kind: "create" })}
+        onDetail={(id) => setPage({ name: "detail", id })}
+      />
+    );
+  }
+
+  // --- ダイアログ ---
+  const deleteTarget = dialog?.kind === "delete" ? findEntry(dialog.id) : null;
+  const editTarget = dialog?.kind === "edit" ? findEntry(dialog.id) : null;
+
+  return (
+    <div className="flex min-h-screen flex-col">
+      <header className="flex h-14 items-center justify-between gap-6 border-b border-neutral-200 bg-white px-8">
+        <button type="button" onClick={() => setPage({ name: "ledger" })} className="flex items-center gap-2.5 text-lg font-bold">
+          <Icon d={ICONS.book} size={22} className="text-blue-700" />小遣い帳
+        </button>
+        <nav className="flex gap-6 text-sm">
+          <button type="button" onClick={() => setPage({ name: "ledger" })} className={page.name === "ledger" ? "font-medium" : "text-neutral-600"}>明細</button>
+          <span className="text-neutral-400">カテゴリ</span>
+        </nav>
+      </header>
+
+      <main className="mx-auto w-full max-w-5xl px-6 pb-16 pt-8">{content}</main>
+
+      <ConfirmDialog
+        open={dialog?.kind === "close"}
+        title={`${monthLabel(viewMonth)}を締めますか？`}
+        description="締めると、この月の明細は追加・変更・削除できなくなります。"
+        confirmLabel="締める"
+        onCancel={closeDialog}
+        onConfirm={closeMonth}
+      />
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="明細を削除しますか？"
+        description={deleteTarget ? `「${deleteTarget.title}」（${dateLabel(deleteTarget.date)}、${signedYen(deleteTarget)}）を削除します。この操作は元に戻せません。` : ""}
+        confirmLabel="削除する"
+        danger
+        onCancel={closeDialog}
+        onConfirm={() => deleteEntry(deleteTarget.id)}
+      />
+      <EntryFormDialog
+        open={dialog?.kind === "create"}
+        mode="create"
+        initial={dialog?.kind === "create" ? { ...EMPTY_FORM, date: isCurrent ? "2026-10-15" : `${viewMonth}-01` } : null}
+        onCancel={closeDialog}
+        onSubmit={addEntry}
+      />
+      <EntryFormDialog
+        open={!!editTarget}
+        mode="edit"
+        initial={editTarget}
+        onCancel={closeDialog}
+        onSubmit={(values) => updateEntry(editTarget.id, values)}
+      />
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
