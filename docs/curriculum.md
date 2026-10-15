@@ -182,19 +182,42 @@ src/
 │   ├── view/           # UI コンポーネント
 │   └── pages.ts        # ルーティングに載せる画面の公開エントリ
 ├── domain/             # 複数の feature が共有する業務ドメイン（今回は使わなくてよい）
-├── infra/ledger/       # Port（インターフェース）と Repository 実装（localStorage・偽 API）
-├── usecase/            # Repository を usecase に組み立てる DI コンテナ。配線だけ
+├── infra/
+│   ├── ledger/
+│   │   ├── ledger.port.ts        # Port（インターフェース）
+│   │   └── ledger.repository.ts  # Repository 実装（localStorage・偽 API）
+│   ├── repos.ts                  # Repository 実装をまとめて生成する
+│   ├── RepositoryProvider.tsx    # Repository を Context で配る Provider
+│   └── useRepos.ts               # Provider から Repository を取り出す hook（usecase の組み立て専用）
+├── usecase/
+│   ├── container.ts              # Repository を usecase に組み立てる DI コンテナ。配線だけ
+│   ├── UsecaseProvider.tsx       # usecase を Context で配る Provider
+│   └── useUsecase.ts             # Provider から usecase を取り出す hook（app/hooks から使う）
 ├── shared/ui/          # feature をまたいで使う汎用の部品。infra・usecase に依存しない
-└── pages/              # ルーティング
+├── pages/              # ルーティング
+└── main.tsx            # composition root。RepositoryProvider → UsecaseProvider → App の順に包む
+```
+
+Provider の配置は次のとおり。`main.tsx` がアプリ全体を 2 つの Provider で包み（composition root）、それより内側では Provider を作らない。
+
+```
+main.tsx
+└── <RepositoryProvider>          infra/repos.ts で Repository 実装を生成して配る
+    └── <UsecaseProvider>         useRepos() で Repository を受け取り、usecase/container.ts で usecase を組み立てて配る
+        └── <App>                 ルーティングと画面。app/hooks は useUsecase() で usecase を受け取る
 ```
 
 依存の方向:
 
 ```
-view ──→ app/hooks ──→ app/usecase ──→ infra（Port 経由）
-                │            └──→ app/mapper ──→ core
+main.tsx ──→ infra/RepositoryProvider ──→ infra/repos.ts ──→ infra/ledger/*.repository.ts
+         └─→ usecase/UsecaseProvider ──→ usecase/container.ts ──→ features/ledger/app/usecase
+
+view ──→ app/hooks ──→ usecase/useUsecase() ──→ app/usecase ──→ infra（Port 経由）
+                │                                    └──→ app/mapper ──→ core
                 └──→ state, core
 state はどこにも依存しない。core は外界に一切依存しない。
+app/hooks は usecase を useUsecase() 経由で受け取り、app/usecase や infra を直接 import しない。
 ```
 
 | レイヤー | 責務 | 置かないもの |
@@ -214,7 +237,7 @@ Issue 候補（この順）:
 2. **core を切り出す**: ルール表（締められるか、編集できるか）、バリデーション、金額計算を `features/ledger/core/` に移す。React を import していないことを確認する。Phase 8 のテストがそのまま通る。
 3. **infra と Port を切り出す**: localStorage と偽 API を `infra/ledger/` の Repository にし、インターフェース（Port）を定義する。usecase からは Port だけを見る。
 4. **usecase と hooks を分ける**: 「締める」「追加する」「初期化する」を `app/usecase/` にし、`app/hooks/` は view と usecase をつなぐだけにする。可否の判断を view や hook から core へ移す。
-5. **DI コンテナ**: `src/usecase/` に Repository を usecase に組み立てるコンテナを置き、Provider で配る。テストでは偽の Repository に差し替えられることを確認する。
+5. **DI コンテナと Provider**: `src/infra/repos.ts` と `RepositoryProvider` で Repository を配り、`src/usecase/container.ts` と `UsecaseProvider` で usecase を組み立てて配る。`main.tsx` で 2 つの Provider を重ねる。`app/hooks` は `useUsecase()` 経由で usecase を受け取るように直す。テストでは `RepositoryProvider` に偽の Repository を渡して、usecase を変更せずに差し替えられることを確認する。
 6. **依存方向を確認する**: 各レイヤーが「依存してよい先」以外を import していないかを確認する。見つかったら直す。
 
 このレイヤー名は実務のリポジトリと同じものなので、Phase 9 を終えると実務のコードを同じ地図で読める。
