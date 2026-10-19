@@ -8,6 +8,7 @@ function EntryRow({ entry }: { entry: Entry }) {
             <td>{entry.title}</td>
             <td><span className={isUncategorized ? "rounded-full px-2.5 py-1 text-xs font-medium bg-amber-100 text-amber-900" : ""}>{entry.category}</span></td>
             <td>{entry.type === 'income' ? '+' : '−'}¥{Math.abs(entry.amount).toLocaleString()}</td>
+            <td>{entry.note !== "" ? "📝" : ""}</td>
         </tr>
     )
 }
