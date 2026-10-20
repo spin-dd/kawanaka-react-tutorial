@@ -3,7 +3,7 @@ import type { Entry } from '../types/entry'
 function EntryRow({ entry }: { entry: Entry }) {
   const isUncategorized = entry.category === "未分類"
   return (
-    <tr className={isUncategorized ? "border-b border-neutral-100 text-sm bg-amber-50" : ""}>
+    <tr className={isUncategorized ? "border-b border-neutral-100 text-sm bg-amber-50" : "border-b border-neutral-100 text-sm"}>
       <td>{entry.date.replaceAll("-", "/")}</td>
       <td>{entry.title}</td>
       <td><span className={isUncategorized ? "rounded-full px-2.5 py-1 text-xs font-medium bg-amber-100 text-amber-900" : "border-b border-neutral-100 text-sm"}>{entry.category}</span></td>
