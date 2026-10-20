@@ -1,4 +1,5 @@
 import type { Entry } from '../types/entry'
+import { formatYen } from '../utils/formatYen.ts'
 
 function EntryRow({ entry }: { entry: Entry }) {
   const isUncategorized = entry.category === "未分類"
@@ -7,7 +8,7 @@ function EntryRow({ entry }: { entry: Entry }) {
       <td>{entry.date.replaceAll("-", "/")}</td>
       <td>{entry.title}</td>
       <td><span className={isUncategorized ? "rounded-full px-2.5 py-1 text-xs font-medium bg-amber-100 text-amber-900" : ""}>{entry.category}</span></td>
-      <td>{(entry.type === 'income' ? '+' : '−') + "¥" + entry.amount.toLocaleString()}</td>
+      <td>{(entry.type === 'income' ? '+' : '−') + formatYen(entry.amount)}</td>
       <td>{entry.note !== "" ? "📝" : ""}</td>
     </tr>
   )
