@@ -1,5 +1,5 @@
 import type { Entry } from '../types/entry'
-import EntryRow from '../components/EntryRow'
+import EntryRow from './EntryRow'
 import Card from '../shared/ui/Card'
 
 function EntryList({ entries }: { entries: Entry[] }) {
