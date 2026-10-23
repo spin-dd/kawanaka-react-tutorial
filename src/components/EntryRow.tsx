@@ -1,5 +1,5 @@
 import type { Entry } from '../types/entry'
-import { formatYen } from '../utils/formatYen.ts'
+import { formatYen } from '../utils/formatYen'
 
 function EntryRow({ entry }: { entry: Entry }) {
   const isUncategorized = entry.category === "未分類"
