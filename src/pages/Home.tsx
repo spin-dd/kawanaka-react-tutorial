@@ -11,10 +11,10 @@ function Home() {
   const monthEntries = sampleEntries.filter(entry => entry.date.slice(0, 7) === displayMonth)
   return (
     <div>
-      <MonthNavigator 
-      month={displayMonth} 
-      onPrev={() => setDisplayMonth(shiftMonth(displayMonth, -1))} 
-      onNext={() => setDisplayMonth(shiftMonth(displayMonth, 1))} />
+      <MonthNavigator
+        month={displayMonth}
+        onPrev={() => setDisplayMonth(shiftMonth(displayMonth, -1))}
+        onNext={() => setDisplayMonth(shiftMonth(displayMonth, 1))} />
       <SummaryCards entries={monthEntries} />
       <EntryList entries={monthEntries} />
     </div>
