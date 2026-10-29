@@ -14,7 +14,7 @@ function Home() {
   const monthEntries = allEntries.filter(
     (entry) => entry.date.slice(0, 7) === displayMonth,
   );
-   function handleAdd(entry: Omit<Entry, "id">) {
+  function handleAdd(entry: Omit<Entry, "id">) {
     const newId = Math.max(...allEntries.map((e) => e.id)) + 1;
     setAllEntries([...allEntries, { ...entry, id: newId }]);
     setDisplayMonth(entry.date.slice(0, 7));
