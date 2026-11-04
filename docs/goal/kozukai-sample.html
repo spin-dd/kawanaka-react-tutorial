@@ -223,7 +223,9 @@ function EntryFormDialog({ open, mode, initial, checkRules, onCancel, onSubmit }
     const next = {};
     if (!form.date) next.date = "日付を入力してください";
     if (!form.title.trim()) next.title = "内容を入力してください";
-    if (!(Number(form.amount) > 0)) next.amount = "1 円以上の金額を入力してください";
+    const amount = Number(form.amount);
+    if (!(amount >= 1)) next.amount = "1 円以上の金額を入力してください";
+    else if (!Number.isInteger(amount)) next.amount = "金額は 1 円単位で入力してください";
     if (form.note.length > NOTE_MAX) next.note = `備考は ${NOTE_MAX} 文字以内で入力してください`;
     // 入力形式のチェックが通った項目だけ、業務ルールのチェックをかける
     const ruleErrors = checkRules(form);
@@ -239,7 +241,7 @@ function EntryFormDialog({ open, mode, initial, checkRules, onCancel, onSubmit }
 
   return (
     <Dialog open={open} title={mode === "edit" ? "明細を編集" : "明細を追加"} onClose={onCancel}>
-      <form onSubmit={submit} className="flex flex-col gap-4">
+      <form onSubmit={submit} className="flex flex-col gap-4" noValidate>
         <div className="grid grid-cols-2 gap-4">
           <div className="flex flex-col gap-1">
             <label htmlFor="f-date" className={label}>日付</label>
