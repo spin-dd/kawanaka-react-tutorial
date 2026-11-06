@@ -38,6 +38,9 @@ function EntryForm({ onAdd }: EntryFormProps) {
     if (Number(amount) < 1) {
       setAmountError("1円以上の金額を入力してください");
       hasError = true;
+    } else if (!Number.isInteger(Number(amount))) {
+      setAmountError("金額は 1 円単位で入力してください");
+      hasError = true;
     } else {
       setAmountError("");
     }
